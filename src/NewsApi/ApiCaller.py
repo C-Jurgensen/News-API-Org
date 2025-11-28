@@ -2,15 +2,16 @@ __all__ = ['call_api', 'SourceId', 'SourceName', 'ApiResponse', 'Articles']
 
 from requests import request
 from typing import NamedTuple, Sequence, TypeAlias
-from datetime import datetime
 from logging import getLogger, INFO, WARNING
 
 _LOGGER = getLogger(__name__)
 
 Author = NamedTuple('Author', (('firstName', str), ('lastName', str)))
 Source = NamedTuple('Source', (('id', str | None), ('name', str)))
-Article = NamedTuple('Article',(('title', str),('description', str),('url', str),('urlToImage', str),('publishedAt', datetime),('content', str)))
+DateTime = NamedTuple('DateTime', (('year', int),('month', int),('day', int),('hour', int),('minute', int),('second', int)))
+Article = NamedTuple('Article',(('title', str),('description', str),('url', str),('urlToImage', str),('publishedAt', DateTime|None),('content', str)))
 MetaData = NamedTuple('MetaData',(('totalResults', int),))
+
 
 class ResponseError(Exception):pass
 class _RecordCreationError(Exception):pass
@@ -87,9 +88,32 @@ class Articles(Authors, Sources):
     Keeps an active record of all articles in the response object.
     """
 
+    __PUBLISHED_DATE_KEY = 'publishedAt'
+    __DATETIME_FORMATTING = \
+        {
+            'hours':lambda dt: int(dt[slice(11,13)]),
+            'minutes': lambda dt: int(dt[slice(14,16)]),
+            'seconds':lambda dt: int(dt[slice(17,19)]),
+            'years':lambda dt: int(dt[slice(0,4)]),
+            'months':lambda dt: int(dt[slice(5,7)]),
+            'days':lambda dt: int(dt[slice(8,10)])
+        }
+
     def __init__(self, articles:Sequence):
         self.articles:list[tuple[Source, Author, Article]] = list()
         self.articles.extend(self.__make_article_record(article_raw) for article_raw in articles if not None)
+
+    @classmethod
+    def __parse_datetime(cls, date_time:str):
+        hour, minute, sec, year, month, day = cls.__DATETIME_FORMATTING.values()
+        return DateTime(
+            year=year(date_time),
+            month=month(date_time),
+            day=day(date_time),
+            hour=hour(date_time),
+            minute=minute(date_time),
+            second=sec(date_time)
+        )
 
     def __make_article_record(self, article_raw:dict) -> tuple[Source|None ,Author|None, Article] | None:
         """
@@ -101,6 +125,8 @@ class Articles(Authors, Sources):
             case {'source':{**source_raw}, 'author':author_raw, **article_data}:
                 try:
                     source:Source | None; author:Author | None; article:Article
+                    if publish_date_str := article_raw.setdefault(self.__PUBLISHED_DATE_KEY):
+                        article_raw[self.__PUBLISHED_DATE_KEY] = self.__parse_datetime(publish_date_str)
                     record = (self.add_source(source_raw), self.add_author(author_raw), Article(**article_data))
                     return record
                 except TypeError:
